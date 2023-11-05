@@ -21,7 +21,8 @@ cd data/class1/
 ```
 
 This downloads a uniformly sampled subset of roughly 30,000 files and removes all files which are either corrupted, too short or have a different frame rate than 30 fps (removes roughly 25% of files). 
-Note that we the method doesn't require use any class labels and therefore we store only the video files in a single folder.
+
+Note that the method doesn't require any class labels and therefore we store only the video files and all in a single folder.
 
 ### Data loading
 We use [PyTorchVideo](https://github.com/facebookresearch/pytorchvideo/) for the data loading. To recreate the random frame sampling with a gap between 4 and 48 frames we create our own sampler. The sampler can be found in `utils/random_temporal_subsample.py`.
