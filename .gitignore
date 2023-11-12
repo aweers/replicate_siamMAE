@@ -2,6 +2,7 @@
 
 framenumbers/
 data/
+notebooks/mnist/
 .DS_Store
 
 # Byte-compiled / optimized / DLL files

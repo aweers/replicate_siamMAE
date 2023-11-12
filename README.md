@@ -27,3 +27,6 @@ Note that the method doesn't require any class labels and therefore we store onl
 ### Data loading
 We use [PyTorchVideo](https://github.com/facebookresearch/pytorchvideo/) for the data loading. To recreate the random frame sampling with a gap between 4 and 48 frames we create our own sampler. The sampler can be found in `utils/random_temporal_subsample.py`.
 In [this notebook](notebooks/dataloading.ipynb) we show empirically that the sampler works as expected.
+
+## Implementation
+We use PyTorch for our implementation. We implemented a Vision Transformer (ViT) based on the descriptions in [SiamMAE](https://arxiv.org/abs/2305.14344), [An Image is Worth 16x16 Words](https://arxiv.org/abs/2010.11929) and [Attention is All You Need](https://arxiv.org/abs/1706.03762). The implementation can be found in `src/vit.py`. A empirical test of the ViT can be found in [this notebook](notebooks/vit-test.ipynb).
