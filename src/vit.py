@@ -206,3 +206,73 @@ class Embedding(nn.Module):
         x = x.view(batch, self.channel, H, W)
 
         return x
+
+# MAE for masking
+# SiamMAE for [CLS] token
+# Transformer for positional encoding
+class MaskedEmbedding(nn.Module):
+    # linear projection + positional encoding (fixed, sine and cosine)
+    def __init__(self, D, patch_size, channel, max_num_patches, mask_ratio, mask_type):
+        super(MaskedEmbedding, self).__init__()
+        self.D = D
+        self.patch_size = patch_size
+        self.channel = channel
+        self.mask_ratio = mask_ratio
+        self.mask_type = mask_type
+
+        # embedding for all patches
+        self.e = nn.Linear(patch_size * patch_size * channel, D)
+        # unembedding for all patches
+        self.u = nn.Linear(D, patch_size * patch_size * channel)
+
+        # positional encoding (fixed, sine and cosine)
+        self.pos_encoding = nn.Parameter(torch.zeros(1, max_num_patches, D))
+        for pos in range(max_num_patches):
+            for i in range(0, D, 2):
+                self.pos_encoding[:, pos, i] = torch.sin(pos / (10000 ** ((2 * i) / D)))
+                self.pos_encoding[:, pos, i + 1] = torch.cos(pos / (10000 ** ((2 * i) / D)))
+        
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, D))
+        
+    def embedding(self, x):
+        # x.shape: (batch, channel, H, W)
+        batch = x.shape[0]
+
+        # split into patches
+        patches = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
+        patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous()
+        patches = patches.view(batch, -1, self.patch_size * self.patch_size * self.channel) # batch, N, patch_size * patch_size * channel
+
+        # embed patches with positional encoding
+        patches = self.e(patches) + self.pos_encoding[:, :patches.shape[1], :] # batch, N, D
+
+        # mask patches
+        if self.mask_type == 'random':
+            # shuffle patches and save shuffled indices
+            self.shuffled_indices = torch.randperm(patches.shape[1])
+            patches = patches[:, self.shuffled_indices, :]
+            patches = patches[:, :-int(patches.shape[1] * self.mask_ratio), :]
+        else:
+            raise Exception('Invalid mask type')
+        
+        return patches
+    
+    def unembedding(self, x):
+        # x.shape: (batch, num_patches * (1 - mask_ratio), D)
+
+        # append learnable masked patches
+        x = torch.cat((x, self.mask_token.repeat(x.shape[0], int(x.shape[1] * self.mask_ratio), 1)), dim=1)
+
+        # unshuffle patches
+        unshaffled_indices = torch.argsort(self.shuffled_indices)
+        x = x[:, unshaffled_indices, :]
+
+        # unembed patches
+        x = self.u(x)
+
+        # reshape to: (batch, channel, H, W)
+        batch, num_patches, _ = x.shape
+        H = W = int((num_patches)**0.5) * self.patch_size
+        x = x.view(batch, self.channel, H, W)
+
+        return x
