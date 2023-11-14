@@ -25,7 +25,7 @@ This downloads a uniformly sampled subset of roughly 30,000 files and removes al
 Note that the method doesn't require any class labels and therefore we store only the video files and all in a single folder.
 
 ### Data loading
-We use [PyTorchVideo](https://github.com/facebookresearch/pytorchvideo/) for the data loading. To recreate the random frame sampling with a gap between 4 and 48 frames we create our own sampler. The sampler can be found in `utils/random_temporal_subsample.py`.
+We use [PyTorchVideo](https://github.com/facebookresearch/pytorchvideo/) for the data loading. To recreate the random frame sampling with a gap between 4 and 48 frames we create our own sampler. We also include the possibility to use a `repeated sampling factor`, such that the overhead of loading and decoding videos is minimized. The sampler can be found in `utils/random_temporal_subsample.py`.
 In [this notebook](notebooks/dataloading.ipynb) we show empirically that the sampler works as expected.
 
 ## Implementation
