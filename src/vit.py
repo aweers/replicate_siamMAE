@@ -166,8 +166,10 @@ class CrossSelfDecoder(nn.Module):
             x = self.decoder_blocks[i](x, z)
         return x
 
-# ViT
+# SiamMAE for [CLS] token
+# Transformer for positional encoding
 class Embedding(nn.Module):
+    # linear projection + positional encoding (fixed, sine and cosine)
     def __init__(self, D, patch_size, channel, max_num_patches):
         super(Embedding, self).__init__()
         self.D = D
@@ -179,26 +181,31 @@ class Embedding(nn.Module):
         # unembedding for all patches
         self.u = nn.Linear(D, patch_size * patch_size * channel)
 
-        self.pos_embedding = nn.Parameter(torch.zeros(1, max_num_patches, D))
-        nn.init.xavier_uniform_(self.pos_embedding)
-
+        # positional encoding (fixed, sine and cosine)
+        self.pos_encoding = nn.Parameter(torch.zeros(1, max_num_patches, D), requires_grad=False)
+        for i in range(0, D, 2):
+            self.pos_encoding[:, :, i] = torch.sin(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
+            self.pos_encoding[:, :, i + 1] = torch.cos(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
+        # TODO: [CLS] token
+        
     def embedding(self, x):
         # x.shape: (batch, channel, H, W)
         batch = x.shape[0]
 
         # split into patches
-        patches = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size) # batch, channel, H // patch_size, W // patch_size, patch_size, patch_size
-
-        patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous() # batch, H // patch_size, W // patch_size, patch_size * patch_size * channel
-        
+        patches = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
+        patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous()
         patches = patches.view(batch, -1, self.patch_size * self.patch_size * self.channel) # batch, N, patch_size * patch_size * channel
 
-        # Add learnable positional embeddings
-        patches = self.e(patches) + self.pos_embedding[:, :patches.shape[1], :]
+        # embed patches with positional encoding
+        patches = self.e(patches) + self.pos_encoding[:, :patches.shape[1], :] # batch, N, D
+        
         return patches
-
+    
     def unembedding(self, x):
         # x.shape: (batch, num_patches, D)
+
+        # unembed patches
         x = self.u(x)
 
         # reshape to: (batch, channel, H, W)
