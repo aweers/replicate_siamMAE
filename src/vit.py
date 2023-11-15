@@ -12,11 +12,12 @@ class LayerNorm(nn.Module):
         super(LayerNorm, self).__init__()
         self.weight = nn.Parameter(torch.ones(D))
         self.bias = nn.Parameter(torch.zeros(D))
+        self.eps = 1e-6
 
     def forward(self, x):
         # x.shape: (batch, N, D)
         mu = torch.mean(x, dim=-2, keepdim=True)
-        sigma = torch.std(x, dim=-2, keepdim=True)
+        sigma = torch.std(x, dim=-2, keepdim=True) + self.eps
         return ((x - mu) / sigma) * self.weight + self.bias
 
 # ViT
