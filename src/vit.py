@@ -25,7 +25,7 @@ class LayerNorm(nn.Module):
 class Attention(nn.Module):
     def __init__(self, D):
         super(Attention, self).__init__()
-        self.D = D
+        self.D = torch.tensor(D, dtype=torch.float32)
         self.Wq = nn.Linear(D, D)
         self.Wk = nn.Linear(D, D)
         self.Wv = nn.Linear(D, D)
@@ -38,7 +38,7 @@ class Attention(nn.Module):
         v = self.Wv(z) # NxD
 
         s = torch.matmul(q, k.transpose(-2, -1)) # NxN
-        attention = nn.functional.softmax(s / torch.sqrt(torch.tensor(self.D)), dim=-1)
+        attention = nn.functional.softmax(s / torch.sqrt(self.D), dim=-1)
         return torch.matmul(attention, v)
 
 # ViT
@@ -69,7 +69,7 @@ class MultiHeadAttention(nn.Module):
         v = v.transpose(1, 2) # batch, heads, N, K
 
         s = torch.matmul(q, k.transpose(-2, -1))
-        attention = nn.functional.softmax(s / torch.sqrt(torch.tensor(self.D)), dim=-1)
+        attention = nn.functional.softmax(s / torch.sqrt(torch.tensor(self.D, dtype=torch.float32)), dim=-1)
 
         y = torch.matmul(attention, v) # batch, heads, N, K
         y = y.transpose(1, 2).contiguous().view(batch, -1, self.D) # batch, N, D
@@ -237,6 +237,14 @@ class Masking(nn.Module):
         
         return embeddings, shuffled_indices, skip
     
+    def mask_deterministic(self, embeddings, shuffled_indices, skip):
+        # mask patches
+        embeddings = embeddings[:, shuffled_indices, :]
+        embeddings = embeddings[:, :-skip, :]
+        
+        return embeddings
+        
+    
     def unmask(self, embeddings, mask_type, shuffled_indices, skip):
         # append learnable masked patches
         if skip > 0:
@@ -253,9 +261,9 @@ class Masking(nn.Module):
         return embeddings
     
     # method to create a mask of size (batch, channel, H, W) with 1s in the masked region and 0s in the unmasked region
-    def create_mask(self, n_embeddings, mask_type, shuffled_indices, skip, channel=3, H=224, W=224, device=None):
-        width = int((n_embeddings+skip)**0.5)
-        mask = torch.zeros((width * width))
+    def create_mask(self, patches_per_dim, mask_type, shuffled_indices, skip, channel=3, H=224, W=224, device=None):
+        width = patches_per_dim
+        mask = torch.zeros((patches_per_dim*patches_per_dim))
         if mask_type == 'random':
             mask[shuffled_indices[-skip:]] = 1
         else:

@@ -4,6 +4,9 @@ framenumbers/
 data/
 data1/
 notebooks/mnist/
+logs/
+old/
+wandb/
 .DS_Store
 
 # Byte-compiled / optimized / DLL files
