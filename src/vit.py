@@ -25,7 +25,7 @@ class LayerNorm(nn.Module):
 class Attention(nn.Module):
     def __init__(self, D):
         super(Attention, self).__init__()
-        self.D = torch.tensor(D, dtype=torch.float32)
+        self.sqrt_d = torch.sqrt(torch.tensor(D, dtype=torch.float32))
         self.Wq = nn.Linear(D, D)
         self.Wk = nn.Linear(D, D)
         self.Wv = nn.Linear(D, D)
@@ -38,7 +38,7 @@ class Attention(nn.Module):
         v = self.Wv(z) # NxD
 
         s = torch.matmul(q, k.transpose(-2, -1)) # NxN
-        attention = nn.functional.softmax(s / torch.sqrt(self.D), dim=-1)
+        attention = nn.functional.softmax(s / self.sqrt_D, dim=-1)
         return torch.matmul(attention, v)
 
 # ViT
@@ -48,6 +48,7 @@ class MultiHeadAttention(nn.Module):
         super(MultiHeadAttention, self).__init__()
         self.heads = heads
         self.D = D
+        self.sqrt_D = torch.sqrt(torch.tensor(D, dtype=torch.float32))
         self.K = D // heads
 
         self.Wq = nn.Linear(D, D)
@@ -69,7 +70,7 @@ class MultiHeadAttention(nn.Module):
         v = v.transpose(1, 2) # batch, heads, N, K
 
         s = torch.matmul(q, k.transpose(-2, -1))
-        attention = nn.functional.softmax(s / torch.sqrt(torch.tensor(self.D, dtype=torch.float32)), dim=-1)
+        attention = nn.functional.softmax(s / self.sqrt_D, dim=-1)
 
         y = torch.matmul(attention, v) # batch, heads, N, K
         y = y.transpose(1, 2).contiguous().view(batch, -1, self.D) # batch, N, D
@@ -223,7 +224,7 @@ class Masking(nn.Module):
     
     def mask(self, embeddings, mask_ratio, mask_type):
         # mask patches
-        #print("Masking: Input shape: ", embeddings.shape)
+        #print("Masking: Input shape: ", embeddings.shape) # [6, 49, 128]
         skip = int(embeddings.shape[1] * mask_ratio)
         if mask_type == 'random':
             # shuffle patches and save shuffled indices
