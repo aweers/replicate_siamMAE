@@ -5,6 +5,7 @@
 
 import torch
 import torch.nn as nn
+from pos_embed import get_2d_sincos_pos_embed
 
 # LayerNorm: https://arxiv.org/abs/1607.06450
 class LayerNorm(nn.Module):
@@ -171,22 +172,36 @@ class CrossSelfDecoder(nn.Module):
 # Transformer for positional encoding
 class Embedding(nn.Module):
     # linear projection + positional encoding (fixed, sine and cosine)
-    def __init__(self, D, patch_size, channel, max_num_patches):
+    def __init__(self, D, patch_size, channel, num_patches, masking):
         super(Embedding, self).__init__()
         self.D = D
         self.patch_size = patch_size
         self.channel = channel
+        self.masking = masking
 
         # embedding for all patches
         self.e = nn.Linear(patch_size * patch_size * channel, D)
+        nn.init.xavier_uniform_(self.e.weight)
         # unembedding for all patches
         self.u = nn.Linear(D, patch_size * patch_size * channel)
+        nn.init.xavier_uniform_(self.u.weight)
+
+
+        self.decoder_embed = nn.Linear(D, D, bias=True)
+        nn.init.xavier_uniform_(self.decoder_embed.weight)
 
         # positional encoding (fixed, sine and cosine)
-        self.pos_encoding = nn.Parameter(torch.zeros(1, max_num_patches, D), requires_grad=False)
-        for i in range(0, D, 2):
-            self.pos_encoding[:, :, i] = torch.sin(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
-            self.pos_encoding[:, :, i + 1] = torch.cos(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, D), requires_grad=False)
+        self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches, D), requires_grad=False)
+
+        # init pos embed
+        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(num_patches**.5), cls_token=False)
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+        decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(num_patches**.5), cls_token=False)
+        self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
+        #for i in range(0, D, 2):
+        #    self.pos_encoding[:, :, i] = torch.sin(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
+        #    self.pos_encoding[:, :, i + 1] = torch.cos(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
         # TODO: [CLS] token
         
     def embedding(self, x):
@@ -199,7 +214,7 @@ class Embedding(nn.Module):
         patches = patches.view(batch, -1, self.patch_size * self.patch_size * self.channel) # batch, N, patch_size * patch_size * channel
 
         # embed patches with positional encoding
-        patches = self.e(patches) + self.pos_encoding[:, :patches.shape[1], :] # batch, N, D
+        patches = self.e(patches) + self.pos_embed[:, :patches.shape[1], :] # batch, N, D
         
         return patches
     
@@ -215,6 +230,19 @@ class Embedding(nn.Module):
         x = x.view(batch, self.channel, H, W)
 
         return x
+    
+    def decoder_embedding(self, x, mask_type, shuffled_indices, skip):
+        batch = x.shape[0]
+
+        x = self.decoder_embed(x)
+        x = self.masking.unmask(x, mask_type, shuffled_indices, skip)
+
+        x += self.decoder_pos_embed
+
+        return x
+
+
+
 
 # MAE
 class Masking(nn.Module):
