@@ -112,6 +112,17 @@ class ViT_Encoder(nn.Module):
         self.heads = heads
         self.num_blocks = num_blocks
         self.encoder_blocks = nn.ModuleList([Encoder_Block(D, heads, mlp_params) for _ in range(num_blocks)])
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            # we use xavier_uniform following official JAX ViT:
+            torch.nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
 
     def forward(self, x):
         # x.shape: (batch, N, D)
