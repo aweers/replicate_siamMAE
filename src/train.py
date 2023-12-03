@@ -70,10 +70,10 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
     log_dir = "logs/wandb_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/"
     os.makedirs(log_dir)
     os.makedirs(log_dir + "plots/")
-    batch_orig = None
-    for b in dataloader:
-        batch_orig = b
-        break
+    #batch_orig = None
+    #for b in dataloader:
+    #    batch_orig = b
+    #    break
     train_loss = []
     val_loss = []
     embedding, encoder, decoder, masking = model
@@ -137,12 +137,7 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
         train_loss.append(np.array(epoch_loss).mean())
         val_loss.append(validate(model, vdataloader, loss_fn, cfg))
         print("Epoch", epoch, "Training loss:", train_loss[-1], "Validation loss:", val_loss[-1])
-        wandb.log(
-            {
-                "train/loss": train_loss[-1],
-                "val/loss": val_loss[-1]
-            }
-        )
+        
         if epoch % cfg['save_model_every'] == 0:
             torch.save(encoder.state_dict(), log_dir + "encoder.pt")
             torch.save(decoder.state_dict(), log_dir + "decoder.pt")
@@ -166,7 +161,24 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
                 ax[i, 3].imshow(mask[0, :, :].permute(1, 2, 0).detach().cpu().numpy())
             plt.savefig(log_dir + f'plots/{epoch}.png', bbox_inches='tight')
             plt.close()
-            wandb.log({"example": wandb.Image(log_dir + f'plots/{epoch}.png')})
+            wandb.log({"example": wandb.Image(log_dir + f'plots/{epoch}.png')}, commit=False)
+        wandb.log(
+            {
+                "train/loss": train_loss[-1],
+                "val/loss": val_loss[-1]
+            }
+        )
+    
+    torch.save(encoder.state_dict(), log_dir + "encoder.pt")
+    torch.save(decoder.state_dict(), log_dir + "decoder.pt")
+    torch.save(embedding.state_dict(), log_dir + "embedding.pt")
+
+    artifact = wandb.Artifact('model', type='model')
+    artifact.add_file(log_dir + "encoder.pt")
+    artifact.add_file(log_dir + "decoder.pt")
+    artifact.add_file(log_dir + "embedding.pt")
+    run.log_artifact(artifact)
+    print("Model saved")
     return train_loss, val_loss
 
 
@@ -184,8 +196,8 @@ def create_label_list(directory_path, label):
 
 if __name__ == "__main__":
     cfg = {
-        "batch_size": 8,
-        "num_workers": 0,
+        "batch_size": 16,
+        "num_workers": 30,
         "channels": 3,
         "image_size": 224,
         "repeated_sampling_factor": 2,
@@ -193,25 +205,25 @@ if __name__ == "__main__":
         "weight_decay": 0.05,
         "beta1": 0.9,
         "beta2": 0.95,
-        "epochs": 60,
-        "data_path": "frames_20/class1/",
-        "val_data_path": "frames_20_val/class1/",
+        "epochs": 10,
+        "data_path": "frames_50/class1/",
+        "val_data_path": "frames_50_val/class1/",
         "patch_size": 16,
-        "D": 768,#768,
+        "D": 768,
         "encoder_heads": 8,
-        "encoder_layers": 6,#12,
-        "encoder_mlp_dim": 512,#2048,
+        "encoder_layers": 12,
+        "encoder_mlp_dim": 2048,
         "decoder_heads": 8,
-        "decoder_layers": 6,#12,
-        "decoder_mlp_dim": 512,#2048,
+        "decoder_layers": 12,
+        "decoder_mlp_dim": 2048,
         "mlp_activation": nn.GELU(),
         "mask_ratio": 0.95,
         "mask_type": 'random',
-        "frame_gap_range": (4, 49),
-        "fps": 29,
+        "frame_gap_range": (2, 25),
+        "fps": 14,
         "use_pretrained": False,
         "pretrained_path": "",
-        "save_model_every": 3,
+        "save_model_every": 2,
         "plot_every": 1
     }
 
