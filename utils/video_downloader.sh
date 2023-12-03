@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Process arguments
 if [ "$#" -ne 3 ]; then
     echo "Usage: $0 <filename> <number of files> <directory>"
@@ -38,16 +37,24 @@ do
         if (( file_counter < num_files_train )); then
             download_directory=$directory
             ((file_counter++))
-        else
+        elif (( val_file_counter < num_files_val )); then
             download_directory=$val_directory
             ((val_file_counter++))
+        else
+            continue
         fi
         progress=$(echo "scale=2; ($file_counter + $val_file_counter) * 100 / $num_files" | bc)
         echo "Downloading and extracting file from URL: $line ($progress% done)"
-        wget -q --show-progress -O - "$line" | tar -xz -C $download_directory
+        (wget -q --show-progress -O - "$line" | tar -xz -C $download_directory) &
+        while (( $(jobs -p | wc -l) >= 50 )); do
+            sleep 1
+        done
     fi
     ((counter++))
 done < $filename
+
+# Wait for all background jobs to finish
+wait
 
 end=$(date +%s)
 elapsed=$((end - start))
