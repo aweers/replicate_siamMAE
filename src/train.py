@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
-from pytorchvideo.data import Kinetics, RandomClipSampler
+from pytorchvideo.data import Kinetics, LabeledVideoDataset, labeled_video_dataset, RandomClipSampler
+from pytorchvideo.data.labeled_video_paths import LabeledVideoPaths
 from pytorchvideo.transforms import (
     ApplyTransformToKey,
     Normalize,
@@ -60,7 +61,7 @@ def validate(model, dataloader, loss_fn, cfg):
             mask = masking.create_mask(cfg['image_size']//cfg['patch_size'], cfg['mask_type'], shuff_idx, skipped_token, H=cfg['image_size'], W=cfg['image_size'], device=device)
             loss = (loss_fn(output, batch[:, 1:].reshape(-1, cfg['channels'], cfg['image_size'], cfg['image_size'])) * mask).sum() / mask.sum()
             val_loss.append(loss.item() / batch_size)
-            if batch_nr >= 2: break
+            #if batch_nr >= 2: break
     embedding.train(), encoder.train(), decoder.train()
     return np.array(val_loss).mean()
 
@@ -76,10 +77,11 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
     train_loss = []
     val_loss = []
     embedding, encoder, decoder, masking = model
+    sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, eta_min=1e-6)
     for epoch in range(cfg['epochs']):
         epoch_loss = []
         #for batch_nr, batch in enumerate(dataloader):
-        for batch_nr, batch in enumerate(tqdm(dataloader, total=data.num_videos//cfg['batch_size'])):
+        for batch_nr, batch in enumerate(tqdm(dataloader, total=data.num_videos//cfg['batch_size'], smoothing=50/data.num_videos//cfg['batch_size'])):
 
             # batch.shape = (batch_size, repeated_sampled_frames, channels, height, width)
             # change to (batch_size * repeated_sampled_frames, channels, height, width)
@@ -129,8 +131,9 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
             epoch_loss.append(loss.item() / batch_size)
             loss.backward()
             optimizer.step()
-            if batch_nr >= 5: break
-
+            #if batch_nr >= 5: break
+        
+        sched.step()
         train_loss.append(np.array(epoch_loss).mean())
         val_loss.append(validate(model, vdataloader, loss_fn, cfg))
         print("Epoch", epoch, "Training loss:", train_loss[-1], "Validation loss:", val_loss[-1])
@@ -166,6 +169,19 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
             wandb.log({"example": wandb.Image(log_dir + f'plots/{epoch}.png')})
     return train_loss, val_loss
 
+
+def create_label_list(directory_path, label):
+    # Get all items in the directory
+    items = os.listdir(directory_path)
+    
+    # Filter for directories only
+    dirs = [item for item in items if os.path.isdir(os.path.join(directory_path, item))]
+
+    # Create list of tuples
+    labeled_dirs = [(os.path.join(directory_path, dir), label) for dir in dirs]
+
+    return labeled_dirs
+
 if __name__ == "__main__":
     cfg = {
         "batch_size": 8,
@@ -173,21 +189,21 @@ if __name__ == "__main__":
         "channels": 3,
         "image_size": 224,
         "repeated_sampling_factor": 2,
-        "lr": 3e-4,
+        "lr": 1.5e-4,
         "weight_decay": 0.05,
         "beta1": 0.9,
         "beta2": 0.95,
         "epochs": 60,
-        "data_path": "data_20/",
-        "val_data_path": "data_20_val/",
+        "data_path": "frames_20/class1/",
+        "val_data_path": "frames_20_val/class1/",
         "patch_size": 16,
-        "D": 768,
+        "D": 768,#768,
         "encoder_heads": 8,
-        "encoder_layers": 2,#12
-        "encoder_mlp_dim": 512,#2048
+        "encoder_layers": 6,#12,
+        "encoder_mlp_dim": 512,#2048,
         "decoder_heads": 8,
-        "decoder_layers": 2,#12
-        "decoder_mlp_dim": 512,#2048
+        "decoder_layers": 6,#12,
+        "decoder_mlp_dim": 512,#2048,
         "mlp_activation": nn.GELU(),
         "mask_ratio": 0.95,
         "mask_type": 'random',
@@ -195,7 +211,7 @@ if __name__ == "__main__":
         "fps": 29,
         "use_pretrained": False,
         "pretrained_path": "",
-        "save_model_every": 5,
+        "save_model_every": 3,
         "plot_every": 1
     }
 
@@ -217,7 +233,7 @@ if __name__ == "__main__":
             transform=Compose(
                 [
                 RandomTemporalSubsample(cfg['frame_gap_range'][0], cfg['frame_gap_range'][1], repeated_sampling=cfg['repeated_sampling_factor']),
-                RandomResizedCrop(cfg['image_size'], cfg['image_size'], scale=(0.2, 1.0), aspect_ratio=(1.0, 1.0), interpolation='bilinear'),
+                RandomResizedCrop(cfg['image_size'], cfg['image_size'], scale=(1.0, 1.0), aspect_ratio=(1.0, 1.0), interpolation='bilinear'),
                 Div255(),
                 # mean and std from ImageNet
                 Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
@@ -230,8 +246,13 @@ if __name__ == "__main__":
         ]
     )
 
-    data = Kinetics(cfg['data_path'], clip_sampler=RandomClipSampler(clip_duration=clip_duration), decode_audio=False, transform=transform)
-    vdata = Kinetics(cfg['val_data_path'], clip_sampler=RandomClipSampler(clip_duration=clip_duration), decode_audio=False, transform=transform)
+    # cfg['data_path']
+    label = {"category": "example"}
+    data_list = create_label_list(cfg['data_path'], label)
+    vdata_list = create_label_list(cfg['val_data_path'], label)
+
+    data = LabeledVideoDataset(data_list, clip_sampler=RandomClipSampler(clip_duration=clip_duration), decode_audio=False, transform=transform)
+    vdata = LabeledVideoDataset(vdata_list, clip_sampler=RandomClipSampler(clip_duration=clip_duration), decode_audio=False, transform=transform)
     cfg['num_videos'] = data.num_videos
     cfg['num_val_videos'] = vdata.num_videos
 
