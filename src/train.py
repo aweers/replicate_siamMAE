@@ -27,6 +27,23 @@ from vit import Embedding, CrossSelfDecoder, ViT_Encoder, Masking
 
 import wandb
 
+def download_model_from_run(run_id, artifact_name="model"):
+    api = wandb.Api()
+
+    run = api.run(run_id)
+    config = run.config
+
+    artifacts = run.logged_artifacts()
+    artifact_name = 'model'
+    artifact = None
+    for art in artifacts:
+        if art.name.split(":")[0] == artifact_name:
+            artifact = art
+
+    if artifact is None:
+        print(f'Artifact {artifact_name} not found in the used artifacts of this run.')
+
+    return artifact, config
 
 def unnormalize(tensor):
     unnormalized = tensor * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
@@ -40,7 +57,7 @@ def validate(model, dataloader, loss_fn, cfg):
     embedding.eval(), encoder.eval(), decoder.eval()
     val_loss = []
     with torch.no_grad():
-        for batch_nr, batch in enumerate(dataloader):
+        for batch_nr, batch in tqdm(enumerate(dataloader), total=data.num_videos//cfg['batch_size'], smoothing=50/data.num_videos//cfg['batch_size']):
             batch_size = batch['video'].shape[0] # actual batch size (important for last batch)
             batch = batch['video'].to(device)
             images = batch.view(-1, cfg['channels'], cfg['image_size'], cfg['image_size'])
@@ -61,11 +78,10 @@ def validate(model, dataloader, loss_fn, cfg):
             mask = masking.create_mask(cfg['image_size']//cfg['patch_size'], cfg['mask_type'], shuff_idx, skipped_token, H=cfg['image_size'], W=cfg['image_size'], device=device)
             loss = (loss_fn(output, batch[:, 1:].reshape(-1, cfg['channels'], cfg['image_size'], cfg['image_size'])) * mask).sum() / mask.sum()
             val_loss.append(loss.item() / batch_size)
-            #if batch_nr >= 2: break
     embedding.train(), encoder.train(), decoder.train()
     return np.array(val_loss).mean()
 
-def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
+def train(model, dataloader, vdataloader, loss_fn, optimizer, sched, cfg, run):
     DEBUG = False
     log_dir = "logs/wandb_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/"
     os.makedirs(log_dir)
@@ -77,7 +93,6 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
     train_loss = []
     val_loss = []
     embedding, encoder, decoder, masking = model
-    sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, eta_min=1e-6)
     for epoch in range(cfg['epochs']):
         epoch_loss = []
         #for batch_nr, batch in enumerate(dataloader):
@@ -131,7 +146,6 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
             epoch_loss.append(loss.item() / batch_size)
             loss.backward()
             optimizer.step()
-            #if batch_nr >= 5: break
         
         sched.step()
         train_loss.append(np.array(epoch_loss).mean())
@@ -142,11 +156,15 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
             torch.save(encoder.state_dict(), log_dir + "encoder.pt")
             torch.save(decoder.state_dict(), log_dir + "decoder.pt")
             torch.save(embedding.state_dict(), log_dir + "embedding.pt")
+            torch.save(optimizer.state_dict(), log_dir + "optimizer.pt")
+            torch.save(sched.state_dict(), log_dir + "scheduler.pt")
 
             artifact = wandb.Artifact('model', type='model')
             artifact.add_file(log_dir + "encoder.pt")
             artifact.add_file(log_dir + "decoder.pt")
             artifact.add_file(log_dir + "embedding.pt")
+            artifact.add_file(log_dir + "optimizer.pt")
+            artifact.add_file(log_dir + "scheduler.pt")
             run.log_artifact(artifact)
             print("Model saved")
 
@@ -172,11 +190,15 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, cfg, run):
     torch.save(encoder.state_dict(), log_dir + "encoder.pt")
     torch.save(decoder.state_dict(), log_dir + "decoder.pt")
     torch.save(embedding.state_dict(), log_dir + "embedding.pt")
+    torch.save(optimizer.state_dict(), log_dir + "optimizer.pt")
+    torch.save(sched.state_dict(), log_dir + "scheduler.pt")
 
     artifact = wandb.Artifact('model', type='model')
     artifact.add_file(log_dir + "encoder.pt")
     artifact.add_file(log_dir + "decoder.pt")
     artifact.add_file(log_dir + "embedding.pt")
+    artifact.add_file(log_dir + "optimizer.pt")
+    artifact.add_file(log_dir + "scheduler.pt")
     run.log_artifact(artifact)
     print("Model saved")
     return train_loss, val_loss
@@ -288,10 +310,24 @@ if __name__ == "__main__":
     masking = Masking(cfg['D'])
     embedding = Embedding(cfg['D'], cfg['patch_size'], cfg['channels'], cfg['image_size']//cfg['patch_size'] * cfg['image_size']//cfg['patch_size'], masking)
 
+    optimizer = torch.optim.AdamW(list(embedding.parameters()) + list(encoder.parameters()) + list(decoder.parameters()), lr=cfg['lr'], betas=(cfg['beta1'], cfg['beta2']), weight_decay=cfg['weight_decay'])
+    sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, eta_min=1e-6)
+
     if cfg['use_pretrained']:
-        encoder.load_state_dict(torch.load(cfg['pretrained_path'] + "encoder.pt"))
-        decoder.load_state_dict(torch.load(cfg['pretrained_path'] + "decoder.pt"))
-        embedding.load_state_dict(torch.load(cfg['pretrained_path'] + "embedding.pt"))
+        artifact, _ = download_model_from_run(cfg['pretrained_path'])
+        artifact_dir = artifact.download()
+        
+        encoder.load_state_dict(torch.load(artifact_dir + "/encoder.pt"))
+        decoder.load_state_dict(torch.load(artifact_dir + "/decoder.pt"))
+        embedding.load_state_dict(torch.load(artifact_dir + "/embedding.pt"))
+        if os.path.isfile(artifact_dir + "/optimizer.pt"):
+            optimizer.load_state_dict(torch.load(artifact_dir + "/optimizer.pt"))
+        else:
+            print("No optimizer found")
+        if os.path.isfile(artifact_dir + "/scheduler.pt"):
+            sched.load_state_dict(torch.load(artifact_dir + "/scheduler.pt"))
+        else:
+            print("No scheduler found")
 
     embedding.train(), encoder.train(), decoder.train()
 
@@ -314,13 +350,11 @@ if __name__ == "__main__":
     cfg['encoder_params'] = encoder_params
     cfg['decoder_params'] = decoder_params
 
-    optimizer = torch.optim.AdamW(list(embedding.parameters()) + list(encoder.parameters()) + list(decoder.parameters()), lr=cfg['lr'], betas=(cfg['beta1'], cfg['beta2']), weight_decay=cfg['weight_decay'])
-
     run = wandb.init(
         project="dd2412-exploration",
         entity="aweers",
         config=cfg
     )
 
-    train_loss, val_loss = train(model, dloader, vdloader, nn.MSELoss(reduction='none'), optimizer, cfg, run)
+    train_loss, val_loss = train(model, dloader, vdloader, nn.MSELoss(reduction='none'), optimizer, sched, cfg, run)
     run.finish()
