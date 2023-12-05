@@ -165,18 +165,22 @@ class CrossSelfDecoderBlock(nn.Module):
         return x
 
 class CrossSelfDecoder(nn.Module):
-    def __init__(self, D, heads, mlp_params, num_blocks):
+    def __init__(self, D, heads, mlp_params, num_blocks, pure_cross=True):
         super(CrossSelfDecoder, self).__init__()
         self.D = D
         self.heads = heads
         self.num_blocks = num_blocks
-        self.decoder_blocks = nn.ModuleList([CrossSelfDecoderBlock(D, heads, mlp_params) for _ in range(num_blocks)])
+        self.pure_cross = pure_cross
+        self.decoder_blocks = nn.ModuleList([CrossSelfDecoderBlock(D, heads, mlp_params) for _ in range(num_blocks-1)])
 
     def forward(self, x, z=None):
         if z is None:
             z = x
         for i in range(self.num_blocks):
-            x = self.decoder_blocks[i](x, z)
+            if i == 0 or self.pure_cross:
+                x = self.decoder_blocks[i](x, z)
+            else:
+                x = self.decoder_blocks[i](x, x)
         return x
 
 # SiamMAE for [CLS] token
