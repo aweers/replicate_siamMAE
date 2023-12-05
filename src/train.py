@@ -218,8 +218,8 @@ def create_label_list(directory_path, label):
 
 if __name__ == "__main__":
     cfg = {
-        "batch_size": 16,
-        "num_workers": 30,
+        "batch_size": 4,
+        "num_workers": 0,
         "channels": 3,
         "image_size": 224,
         "repeated_sampling_factor": 2,
@@ -228,8 +228,8 @@ if __name__ == "__main__":
         "beta1": 0.9,
         "beta2": 0.95,
         "epochs": 10,
-        "data_path": "frames_50/class1/",
-        "val_data_path": "frames_50_val/class1/",
+        "data_path": "frames_20/class1/",
+        "val_data_path": "frames_20_val/class1/",
         "patch_size": 16,
         "D": 768,
         "encoder_heads": 8,
@@ -243,10 +243,11 @@ if __name__ == "__main__":
         "mask_type": 'random',
         "frame_gap_range": (2, 25),
         "fps": 14,
-        "use_pretrained": False,
-        "pretrained_path": "",
+        "use_pretrained": True,
+        "pretrained_path": "aweers/dd2412-exploration/an824ywb",
         "save_model_every": 2,
-        "plot_every": 1
+        "plot_every": 1,
+        "pure_cross_attention": False
     }
 
     # Calculated parameters
@@ -306,7 +307,7 @@ if __name__ == "__main__":
     )
 
     encoder = ViT_Encoder(cfg['D'], cfg['encoder_heads'], (cfg['encoder_mlp_dim'], cfg['mlp_activation']), cfg['encoder_layers'])
-    decoder = CrossSelfDecoder(cfg['D'], cfg['decoder_heads'], (cfg['decoder_mlp_dim'], cfg['mlp_activation']), cfg['decoder_layers'])
+    decoder = CrossSelfDecoder(cfg['D'], cfg['decoder_heads'], (cfg['decoder_mlp_dim'], cfg['mlp_activation']), cfg['decoder_layers'], cfg['pure_cross_attention'])
     masking = Masking(cfg['D'])
     embedding = Embedding(cfg['D'], cfg['patch_size'], cfg['channels'], cfg['image_size']//cfg['patch_size'] * cfg['image_size']//cfg['patch_size'], masking)
 
