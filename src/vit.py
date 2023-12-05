@@ -171,7 +171,7 @@ class CrossSelfDecoder(nn.Module):
         self.heads = heads
         self.num_blocks = num_blocks
         self.pure_cross = pure_cross
-        self.decoder_blocks = nn.ModuleList([CrossSelfDecoderBlock(D, heads, mlp_params) for _ in range(num_blocks-1)])
+        self.decoder_blocks = nn.ModuleList([CrossSelfDecoderBlock(D, heads, mlp_params) for _ in range(num_blocks)])
 
     def forward(self, x, z=None):
         if z is None:
