@@ -170,9 +170,9 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, sched, cfg, run):
 
         if epoch % cfg['plot_every'] == 0:
             # plot image
-            fig, ax = plt.subplots(3, 4)
+            fig, ax = plt.subplots(5, 4)
             
-            for i in range(3):
+            for i in range(5):
                 ax[i, 0].imshow(unnormalize(batch[i, 0, :, :, :].detach().cpu()).permute(1, 2, 0).numpy())
                 ax[i, 1].imshow(unnormalize(batch[i, 1, :, :, :].detach().cpu()).permute(1, 2, 0).numpy())
                 ax[i, 2].imshow(unnormalize(output[i*cfg['repeated_sampling_factor'], :, :, :].detach().cpu()).permute(1, 2, 0).numpy())
