@@ -57,7 +57,7 @@ def validate(model, dataloader, loss_fn, cfg):
     embedding.eval(), encoder.eval(), decoder.eval()
     val_loss = []
     with torch.no_grad():
-        for batch_nr, batch in tqdm(enumerate(dataloader), total=data.num_videos//cfg['batch_size'], smoothing=50/data.num_videos//cfg['batch_size']):
+        for batch_nr, batch in tqdm(enumerate(dataloader), total=vdata.num_videos//cfg['batch_size'], smoothing=50/vdata.num_videos//cfg['batch_size']):
             batch_size = batch['video'].shape[0] # actual batch size (important for last batch)
             batch = batch['video'].to(device)
             images = batch.view(-1, cfg['channels'], cfg['image_size'], cfg['image_size'])
@@ -218,8 +218,8 @@ def create_label_list(directory_path, label):
 
 if __name__ == "__main__":
     cfg = {
-        "batch_size": 4,
-        "num_workers": 0,
+        "batch_size": 16,
+        "num_workers": 31,
         "channels": 3,
         "image_size": 224,
         "repeated_sampling_factor": 2,
@@ -227,9 +227,9 @@ if __name__ == "__main__":
         "weight_decay": 0.05,
         "beta1": 0.9,
         "beta2": 0.95,
-        "epochs": 10,
-        "data_path": "frames_20/class1/",
-        "val_data_path": "frames_20_val/class1/",
+        "epochs": 20,
+        "data_path": "frames_40/class1/",
+        "val_data_path": "frames_40_val/class1/",
         "patch_size": 16,
         "D": 768,
         "encoder_heads": 8,
@@ -239,13 +239,13 @@ if __name__ == "__main__":
         "decoder_layers": 12,
         "decoder_mlp_dim": 2048,
         "mlp_activation": nn.GELU(),
-        "mask_ratio": 0.95,
+        "mask_ratio": 0.5,
         "mask_type": 'random',
         "frame_gap_range": (2, 25),
         "fps": 14,
-        "use_pretrained": True,
-        "pretrained_path": "aweers/dd2412-exploration/an824ywb",
-        "save_model_every": 2,
+        "use_pretrained": False,
+        "pretrained_path": "",
+        "save_model_every": 10,
         "plot_every": 1,
         "pure_cross_attention": False
     }
@@ -296,14 +296,16 @@ if __name__ == "__main__":
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
         shuffle=False,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True
     )
     vdloader = torch.utils.data.DataLoader(
         vdata,
         batch_size=cfg['batch_size'],
         num_workers=cfg['num_workers'],
         shuffle=False,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True
     )
 
     encoder = ViT_Encoder(cfg['D'], cfg['encoder_heads'], (cfg['encoder_mlp_dim'], cfg['mlp_activation']), cfg['encoder_layers'])
