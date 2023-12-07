@@ -18,7 +18,7 @@ total_lines=$(wc -l < $filename)
 step_size=$((total_lines / num_files))
 
 # Calculate the number of files for each directory
-num_files_train=$((num_files * 7 / 10))
+num_files_train=$((num_files * 9 / 10))
 num_files_val=$((num_files - num_files_train))
 
 echo "Downloading and extracting $num_files_train files to $directory and $num_files_val files to $val_directory."
