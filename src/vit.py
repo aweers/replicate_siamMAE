@@ -114,9 +114,9 @@ class ViT_Encoder(nn.Module):
         self.encoder_blocks = nn.ModuleList([Encoder_Block(D, heads, mlp_params) for _ in range(num_blocks)])
         self.apply(self._init_weights)
 
+    # Weight initialization is from https://github.com/facebookresearch/mae/blob/main/models_mae.py
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
-            # we use xavier_uniform following official JAX ViT:
             torch.nn.init.xavier_uniform_(m.weight)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
@@ -205,19 +205,15 @@ class Embedding(nn.Module):
         self.decoder_embed = nn.Linear(D, D, bias=True)
         nn.init.xavier_uniform_(self.decoder_embed.weight)
 
-        # positional encoding (fixed, sine and cosine)
+        # positional embedding (fixed, sine and cosine)
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, D), requires_grad=False)
         self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches, D), requires_grad=False)
 
-        # init pos embed
+        # Positional embedding is from https://github.com/facebookresearch/mae/blob/main/models_mae.py
         pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(num_patches**.5), cls_token=False)
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
         decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(num_patches**.5), cls_token=False)
         self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
-        #for i in range(0, D, 2):
-        #    self.pos_encoding[:, :, i] = torch.sin(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
-        #    self.pos_encoding[:, :, i + 1] = torch.cos(torch.arange(max_num_patches) / (10000 ** ((2 * i) / D)))
-        # TODO: [CLS] token
         
     def embedding(self, x):
         # x.shape: (batch, channel, H, W)
@@ -247,17 +243,12 @@ class Embedding(nn.Module):
         return x
     
     def decoder_embedding(self, x, mask_type, shuffled_indices, skip):
-        batch = x.shape[0]
-
         x = self.decoder_embed(x)
         x = self.masking.unmask(x, mask_type, shuffled_indices, skip)
 
         x += self.decoder_pos_embed
 
         return x
-
-
-
 
 # MAE
 class Masking(nn.Module):
@@ -267,7 +258,6 @@ class Masking(nn.Module):
     
     def mask(self, embeddings, mask_ratio, mask_type):
         # mask patches
-        #print("Masking: Input shape: ", embeddings.shape) # [6, 49, 128]
         skip = int(embeddings.shape[1] * mask_ratio)
         if mask_type == 'random':
             # shuffle patches and save shuffled indices
@@ -276,8 +266,6 @@ class Masking(nn.Module):
             embeddings = embeddings[:, :-skip, :]
         else:
             raise Exception('Invalid mask type')
-        
-        #print("Masking: Output shape: ", embeddings.shape)
         
         return embeddings, shuffled_indices, skip
     
