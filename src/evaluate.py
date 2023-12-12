@@ -23,13 +23,32 @@ sys.path.insert(1, '../src')
 from vit import Embedding, ViT_Encoder, Masking
 from wandb_helper import download_model_from_run
 
-import matplotlib.pyplot as plt
-
 def unnormalize(tensor):
+    """
+    Unnormalizes a tensor by applying the reverse transformation of the normalization process.
+
+    Args:
+        tensor (torch.Tensor): The tensor to be unnormalized.
+
+    Returns:
+        torch.Tensor: The unnormalized tensor.
+
+    """
     unnormalized = tensor * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
     return (torch.clamp(unnormalized, 0, 1) * 255).to(dtype=torch.uint8)
 
 def create_label_list(directory_path, label):
+    """
+    Create a list of labeled directories (necessary for loading videos as directories
+    of frames).
+
+    Args:
+        directory_path (str): The path to the directory containing the directories to be labeled.
+        label (str): The label to assign to the directories.
+
+    Returns:
+        list: A list of tuples, where each tuple contains the path of a labeled directory and its corresponding label.
+    """
     items = os.listdir(directory_path)
     dirs = [item for item in items if os.path.isdir(os.path.join(directory_path, item))]
     labeled_dirs = [(os.path.join(directory_path, dir), label) for dir in dirs]
@@ -37,7 +56,17 @@ def create_label_list(directory_path, label):
     return labeled_dirs
 
 def get_features(frame, upsample=True, pos_embed_factor=1.0):
-    # A forward pass through the encoder part to get the features
+    """
+    Extracts features from a given frame.
+
+    Args:
+        frame (torch.Tensor): The input frame.
+        upsample (bool, optional): Whether to upsample the features. Defaults to True.
+        pos_embed_factor (float, optional): The factor to scale the positional embeddings. Defaults to 1.0.
+
+    Returns:
+        torch.Tensor: The extracted features.
+    """
     if frame.shape[0] == 3:
         features = frame.unsqueeze(0)
     else:
@@ -58,7 +87,17 @@ def get_features(frame, upsample=True, pos_embed_factor=1.0):
     return features
 
 def create_mask(size, n):
-    # Create a mask to limit the influence of each patch to its neighbors
+    """
+    Create a binary mask of size `size` where each pixel within a distance `n` from any other pixel is set to 1,
+    and all other pixels are set to 0.
+
+    Args:
+        size (int): The size of the mask (width and height).
+        n (float): The maximum distance between pixels for them to be considered neighbors.
+
+    Returns:
+        torch.Tensor: The binary mask of size `size`.
+    """
     y, x = torch.meshgrid(torch.arange(size), torch.arange(size))
     coords = torch.stack((x, y), dim=-1).reshape(-1, 2).float()
 
@@ -68,7 +107,21 @@ def create_mask(size, n):
     return mask
 
 def propagate_labels_multi_frames(features_previous, features_current, labels_previous, k, radius=5):
-    T = 1
+    """
+    Propagates labels from previous frames to the current frame based on feature affinities.
+
+    Args:
+        features_previous (torch.Tensor): Feature maps of the previous frames. Shape: (n, 196, 768)
+        features_current (torch.Tensor): Feature maps of the current frame. Shape: (196, 768)
+        labels_previous (torch.Tensor): Labels of the previous frames. Shape: (n, 196, 3)
+        k (int): Number of top affinities to consider for label propagation.
+        radius (int, optional): Radius for creating the affinity mask. Defaults to 5.
+
+    Returns:
+        torch.Tensor: Propagated labels for the current frame. Shape: (196, 3)
+    """
+    T = 1 # temperature parameter
+
     # Reshape the feature maps
     features_previous = features_previous.reshape(features_previous.shape[0], features_previous.shape[1], -1).transpose(1, 2) # n x 196 x 768
     features_current = features_current.reshape(features_current.shape[0], -1).transpose(0, 1)                                # 196 x 768
@@ -102,15 +155,26 @@ def propagate_labels_multi_frames(features_previous, features_current, labels_pr
         averaged_value /= total_weight
         labels_next[i, :] = averaged_value
 
-        
-        
     return labels_next
 
-# Performs video label propagation on a video
-# The labels of `queue_length` frames are propagated to the next frame
-# The labels for each patch are determined by the `k` nearest neighbors (affinity in feature space)
-# Each patch's influence is limited to a radius of `neighbor` patches
-def evaluate_video(video, annotation, pos_embed_factor=0.01, queue_length=20, k=7, neighbor=1, interpolation_mode='bilinear'):
+def evaluate_video(video, annotation, pos_embed_factor=1.0, queue_length=20, k=7, neighbor=1, interpolation_mode='bilinear'):
+    """
+    Evaluate the video by calculating the Jaccard index and F1 score for each frame. Labels are propagated from
+    the previous frames to the current frame.
+
+    Args:
+        video (torch.Tensor): The video frames.
+        annotation (torch.Tensor): The ground truth annotation for each frame.
+        pos_embed_factor (float, optional): The position embedding factor. Defaults to 1.0.
+        queue_length (int, optional): The length of the queue frames. Defaults to 20.
+        k (int, optional): The number of nearest neighbors to consider. Defaults to 7.
+        neighbor (int, optional): The number of neighbors to propagate labels from. Defaults to 1.
+        interpolation_mode (str, optional): The interpolation mode for resizing frames. Defaults to 'bilinear'.
+
+    Returns:
+        float: The average Jaccard index for all frames.
+        float: The average F1 score for all frames.
+    """
     video_length = video.shape[0]
     
     # Calculate features for all frames
@@ -151,13 +215,9 @@ def evaluate_video(video, annotation, pos_embed_factor=0.01, queue_length=20, k=
 
     return jaccard.compute().item(), f1.compute().item()
 
+# Settings
 device = "cpu"
-
-run_id = "4153hlx9" # 85 0.95
-#run_id = "0qqeq5wm" # 82 0.75
-#run_id = "47a3nsuo" # 83 0.75 true_cross
-#run_id = "qrk3sza1" # 92 0.5
-#run_id = "ckenfh0b"
+run_id = "4153hlx9"
 
 artifact, cfg = download_model_from_run("aweers/dd2412-exploration/"+run_id)
 
@@ -199,7 +259,7 @@ transform = Compose(
         ),
     ]
 )
-clip_duration = 20
+clip_duration = 20 # needs to be minimum as long as the longest video in the dataset
 data = LabeledVideoDataset(data_list, clip_sampler=UniformClipSampler(clip_duration=clip_duration), decode_audio=False, transform=transform)
 annotations = LabeledVideoDataset(annotation_list, clip_sampler=UniformClipSampler(clip_duration=clip_duration), decode_audio=False, transform=transform)
 

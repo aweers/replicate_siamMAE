@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
-from pytorchvideo.data import Kinetics, LabeledVideoDataset, labeled_video_dataset, RandomClipSampler
-from pytorchvideo.data.labeled_video_paths import LabeledVideoPaths
+from pytorchvideo.data import LabeledVideoDataset, RandomClipSampler
 from pytorchvideo.transforms import (
     ApplyTransformToKey,
     Normalize,
@@ -28,13 +27,22 @@ from vit import Embedding, CrossSelfDecoder, ViT_Encoder, Masking
 import wandb
 
 def download_model_from_run(run_id, artifact_name="model"):
+    """
+    Downloads a model artifact from a specified W&B run.
+
+    Args:
+        run_id (str): The ID of the run from which to download the model artifact.
+        artifact_name (str, optional): The name of the model artifact. Defaults to "model".
+
+    Returns:
+        tuple: A tuple containing the downloaded artifact and the run configuration.
+    """
     api = wandb.Api()
 
     run = api.run(run_id)
     config = run.config
 
     artifacts = run.logged_artifacts()
-    artifact_name = 'model'
     artifact = None
     for art in artifacts:
         if art.name.split(":")[0] == artifact_name:
@@ -46,13 +54,44 @@ def download_model_from_run(run_id, artifact_name="model"):
     return artifact, config
 
 def unnormalize(tensor):
+    """
+    Unnormalizes a tensor by applying the reverse transformation of the normalization process.
+
+    Args:
+        tensor (torch.Tensor): The tensor to be unnormalized.
+
+    Returns:
+        torch.Tensor: The unnormalized tensor.
+
+    """
     unnormalized = tensor * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
     return (torch.clamp(unnormalized, 0, 1) * 255).to(dtype=torch.uint8)
 
 def count_parameters(model):
+    """
+    Counts the number of trainable parameters in a nn.Module.
+
+    Args:
+        model (nn.Module): The model to count the parameters of.
+
+    Returns:
+        int: The total number of trainable parameters in the model.
+    """
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def validate(model, dataloader, loss_fn, cfg):
+    """
+    Function to validate the model on a given dataloader.
+
+    Args:
+        model (tuple): Tuple containing the embedding, encoder, decoder, and masking models.
+        dataloader (torch.utils.data.DataLoader): DataLoader object containing the validation data.
+        loss_fn (torch.nn.Module): Loss function used to calculate the validation loss.
+        cfg (dict): Configuration dictionary containing various parameters.
+
+    Returns:
+        float: Mean validation loss.
+    """
     embedding, encoder, decoder, masking = model
     embedding.eval(), encoder.eval(), decoder.eval()
     val_loss = []
@@ -61,83 +100,88 @@ def validate(model, dataloader, loss_fn, cfg):
             batch_size = batch['video'].shape[0] # actual batch size (important for last batch)
             batch = batch['video'].to(device)
             images = batch.view(-1, cfg['channels'], cfg['image_size'], cfg['image_size'])
+
             # embedding
             embeddings = embedding.embedding(images).view(batch_size, cfg['repeated_sampling_factor']+1, -1, cfg['D'])
+
             # masking
             first_frame = embeddings[:, 0, :, :]
             future_frames, shuff_idx, skipped_token = masking.mask(embeddings[:, 1:, :, :].reshape(batch_size*cfg['repeated_sampling_factor'], -1, cfg['D']), cfg['mask_ratio'], cfg['mask_type'])
+
             # encoder
             first_frame = encoder(first_frame)
             future_frames = encoder(future_frames)
+
             # unmasking
             future_frames = embedding.decoder_embedding(future_frames, cfg['mask_type'], shuff_idx, skipped_token)
             output = decoder(future_frames, first_frame.repeat(1, cfg['repeated_sampling_factor'], 1).view(batch_size*cfg['repeated_sampling_factor'], -1, cfg['D']))
+
             # unembedding
             output = embedding.unembedding(output)
+
             # calculate loss
             mask = masking.create_mask(cfg['image_size']//cfg['patch_size'], cfg['mask_type'], shuff_idx, skipped_token, H=cfg['image_size'], W=cfg['image_size'], device=device)
             loss = (loss_fn(output, batch[:, 1:].reshape(-1, cfg['channels'], cfg['image_size'], cfg['image_size'])) * mask).sum() / mask.sum()
             val_loss.append(loss.item() / batch_size)
+
     embedding.train(), encoder.train(), decoder.train()
     return np.array(val_loss).mean()
 
 def train(model, dataloader, vdataloader, loss_fn, optimizer, sched, cfg, run):
-    DEBUG = False
+    """
+    Trains the model using the provided data and hyperparameters. Saves checkpoints
+    every cfg['save_model_every'] epochs and plots example images every cfg['plot_every']
+    epochs.
+
+    Args:
+        model (tuple): Tuple containing the embedding, encoder, decoder, and masking models.
+        dataloader (torch.utils.data.DataLoader): DataLoader for the training data.
+        vdataloader (torch.utils.data.DataLoader): DataLoader for the validation data.
+        loss_fn (torch.nn.Module): Loss function to calculate the training loss.
+        optimizer (torch.optim.Optimizer): Optimizer for updating the model parameters.
+        sched (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler for the optimizer.
+        cfg (dict): Dictionary containing the hyperparameters and configuration settings.
+        run: Object for logging the training progress.
+
+    Returns:
+        tuple: Tuple containing the training loss and validation loss for each epoch.
+    """
     log_dir = "logs/wandb_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "/"
     os.makedirs(log_dir)
     os.makedirs(log_dir + "plots/")
-    #batch_orig = None
-    #for b in dataloader:
-    #    batch_orig = b
-    #    break
     train_loss = []
     val_loss = []
     embedding, encoder, decoder, masking = model
     for epoch in range(cfg['epochs']):
         epoch_loss = []
-        #for batch_nr, batch in enumerate(dataloader):
-        for batch_nr, batch in enumerate(tqdm(dataloader, total=data.num_videos//cfg['batch_size'], smoothing=50/data.num_videos//cfg['batch_size'])):
+        for batch in tqdm(dataloader, total=data.num_videos//cfg['batch_size'], smoothing=50/data.num_videos//cfg['batch_size']):
 
             # batch.shape = (batch_size, repeated_sampled_frames, channels, height, width)
             # change to (batch_size * repeated_sampled_frames, channels, height, width)
             batch_size = batch['video'].shape[0] # actual batch size (important for last batch)
             batch = batch['video'].to(device)
             images = batch.view(-1, cfg['channels'], cfg['image_size'], cfg['image_size'])
-            if DEBUG: print("images.shape: ", images.shape)
             optimizer.zero_grad()
             # embedding
             embeddings = embedding.embedding(images).view(batch_size, cfg['repeated_sampling_factor']+1, -1, cfg['D'])
-            #print(embeddings[0, 0, 0, :5])
-            if DEBUG: print("Embeddings.shape: ", embeddings.shape)
 
             # masking
             first_frame = embeddings[:, 0, :, :]
-            if DEBUG: print("First_frame.shape: ", first_frame.shape)
             future_frames, shuff_idx, skipped_token = masking.mask(embeddings[:, 1:, :, :].reshape(batch_size*cfg['repeated_sampling_factor'], -1, cfg['D']), cfg['mask_ratio'], cfg['mask_type'])
-            if DEBUG: print("Future_frames.shape: ", future_frames.shape)
 
             # encoder
             first_frame = encoder(first_frame)
-            if DEBUG: print("First_frame.shape (after encoding): ", first_frame.shape)
             future_frames = encoder(future_frames)
-            #print(future_frames[0, 0, :5])
-            if DEBUG: print("Future_frames.shape (after encoding): ", future_frames.shape)
 
             # unmasking
             future_frames = embedding.decoder_embedding(future_frames, cfg['mask_type'], shuff_idx, skipped_token)
-            if DEBUG: print("Future_frames.shape (after unmasking): ", future_frames.shape)
 
             output = decoder(future_frames, first_frame.repeat(1, cfg['repeated_sampling_factor'], 1).view(batch_size*cfg['repeated_sampling_factor'], -1, cfg['D']))
-            #output = decoder(first_frame.repeat(1, REPEATED_SAMPLING_FACTOR, 1).view(batch_size*REPEATED_SAMPLING_FACTOR, -1, D), future_frames)
-            if DEBUG: print("Output.shape: ", output.shape)
-            #print(output[0, 0, :5])
 
             # unembedding
             output = embedding.unembedding(output)
-            if DEBUG: print("Output.shape (after unembedding): ", output.shape)
 
             # calculate loss
-            #loss = loss_fn(output.reshape(-1, 1), batch[:, 1:, :, :, :].reshape(-1, 1))
             mask = masking.create_mask(cfg['image_size']//cfg['patch_size'], cfg['mask_type'], shuff_idx, skipped_token, H=cfg['image_size'], W=cfg['image_size'], device=device)
             
             # Loss is calculated only on the masked tokens (MAE)
@@ -206,22 +250,30 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, sched, cfg, run):
         artifact.add_file(log_dir + "scheduler.pt")
     run.log_artifact(artifact)
     print("Model saved")
+
     return train_loss, val_loss
 
 
 def create_label_list(directory_path, label):
-    # Get all items in the directory
-    items = os.listdir(directory_path)
-    
-    # Filter for directories only
-    dirs = [item for item in items if os.path.isdir(os.path.join(directory_path, item))]
+    """
+    Create a list of labeled directories (necessary for loading videos as directories
+    of frames).
 
-    # Create list of tuples
+    Args:
+        directory_path (str): The path to the directory containing the directories to be labeled.
+        label (str): The label to assign to the directories.
+
+    Returns:
+        list: A list of tuples, where each tuple contains the path of a labeled directory and its corresponding label.
+    """
+    items = os.listdir(directory_path)
+    dirs = [item for item in items if os.path.isdir(os.path.join(directory_path, item))]
     labeled_dirs = [(os.path.join(directory_path, dir), label) for dir in dirs]
 
     return labeled_dirs
 
 if __name__ == "__main__":
+    # Hyperparameters
     cfg = {
         "batch_size": 16,
         "num_workers": 78,
@@ -255,8 +307,6 @@ if __name__ == "__main__":
         "pure_cross_attention": False,
         "use_scheduler": False
     }
-
-    # Calculated parameters
     clip_duration = cfg['frame_gap_range'][1] / cfg['fps'] + 0.0001
 
     device = torch.device("cpu")
@@ -287,8 +337,7 @@ if __name__ == "__main__":
         ]
     )
 
-    # cfg['data_path']
-    label = {"category": "example"}
+    label = {"category": "example"} # label is not used, but necessary for the LabeledVideoDataset
     data_list = create_label_list(cfg['data_path'], label)
     vdata_list = create_label_list(cfg['val_data_path'], label)
 
