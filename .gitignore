@@ -8,6 +8,7 @@ logs/
 old/
 wandb/
 .DS_Store
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
