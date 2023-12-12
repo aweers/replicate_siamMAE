@@ -78,7 +78,6 @@ def propagate_labels_multi_frames(features_previous, features_current, labels_pr
     for frame_nr in range(features_previous.shape[0]):
         # Compute the affinity between the features in the previous and current frames
         affinity = torch.matmul(features_previous[frame_nr, :, :], features_current.T) # 196 x 196
-        #affinity = torch.matmul(features_current, features_previous[frame_nr, :, :].T) # 196 x 196
         affinity = torch.nn.functional.softmax(affinity/T, dim=1)
         mask = create_mask(int(affinity.shape[0]**0.5), radius)
 
@@ -118,6 +117,7 @@ def evaluate_video(video, annotation, pos_embed_factor=0.01, queue_length=20, k=
     features = get_features(video, upsample=False, pos_embed_factor=pos_embed_factor)
     
     jaccard = torchmetrics.classification.MultilabelJaccardIndex(3, average='micro', validate_args=False)
+    f1 = torchmetrics.classification.MultilabelF1Score(3, average='micro')
     for i in range(video_length-queue_length):
         # Prepare queue frames
         features_previous = features[i:i+queue_length]
@@ -141,17 +141,15 @@ def evaluate_video(video, annotation, pos_embed_factor=0.01, queue_length=20, k=
         #prediction[torch.arange(next_labels.shape[0]), torch.arange(next_labels.shape[1]), next_labels.argmax(dim=2)] = 1
 
         val = jaccard(prediction.permute(2, 0, 1).unsqueeze(0), ground_truth.permute(2, 0, 1).unsqueeze(0))
+        f1(prediction.permute(2, 0, 1).unsqueeze(0), ground_truth.permute(2, 0, 1).unsqueeze(0))
         #plt.subplot(1, 2, 1)
         #plt.imshow(prediction*255)
         #plt.subplot(1, 2, 2)
         #plt.imshow(ground_truth*255)
         #plt.title(f"Jaccard Index: {val.item():.4f}")
         #plt.show()
-        
-        
-        
-    
-    return jaccard.compute().item()
+
+    return jaccard.compute().item(), f1.compute().item()
 
 device = "cpu"
 
@@ -221,12 +219,15 @@ annot_loader = torch.utils.data.DataLoader(
 pbar = tqdm(zip(dloader, annot_loader), total=data.num_videos)
 
 js = []
+f1s = []
 for batch, annot_batch in pbar:
     video = batch['video']
     annotation = annot_batch['video']
 
-    js.append(evaluate_video(video[0], annotation[0], pos_embed_factor=1.0, interpolation_mode='bilinear'))
+    jaccard, f1 = evaluate_video(video[0], annotation[0], pos_embed_factor=1.0, interpolation_mode='bilinear')
+    js.append(jaccard)
+    f1s.append(f1)
     
-    pbar.set_description(f"Mean Jaccard Index: {np.mean(js):.4f}")
+    pbar.set_description(f"Mean Jaccard Index: {np.mean(js):.4f} Mean F1 Score: {np.mean(f1s):.4f}")
 
-print(f"Evaluation of run {run_id} finished. Mean Jaccard Index: {np.mean(js):.6f}\tStd: {np.std(js):.6f}")
+print(f"Evaluation of run {run_id} finished. Mean Jaccard Index: {np.mean(js):.6f}\tStd: {np.std(js):.6f}\tMean F1 Score: {np.mean(f1s):.6f}\tStd: {np.std(f1s):.6f}")

@@ -147,7 +147,8 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, sched, cfg, run):
             loss.backward()
             optimizer.step()
         
-        sched.step()
+        if not sched is None:
+            sched.step()
         train_loss.append(np.array(epoch_loss).mean())
         val_loss.append(validate(model, vdataloader, loss_fn, cfg))
         print("Epoch", epoch, "Training loss:", train_loss[-1], "Validation loss:", val_loss[-1])
@@ -157,14 +158,16 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, sched, cfg, run):
             torch.save(decoder.state_dict(), log_dir + "decoder.pt")
             torch.save(embedding.state_dict(), log_dir + "embedding.pt")
             torch.save(optimizer.state_dict(), log_dir + "optimizer.pt")
-            torch.save(sched.state_dict(), log_dir + "scheduler.pt")
+            if not sched is None:
+                torch.save(sched.state_dict(), log_dir + "scheduler.pt")
 
             artifact = wandb.Artifact('model', type='model')
             artifact.add_file(log_dir + "encoder.pt")
             artifact.add_file(log_dir + "decoder.pt")
             artifact.add_file(log_dir + "embedding.pt")
             artifact.add_file(log_dir + "optimizer.pt")
-            artifact.add_file(log_dir + "scheduler.pt")
+            if not sched is None:
+                artifact.add_file(log_dir + "scheduler.pt")
             run.log_artifact(artifact)
             print("Model saved")
 
@@ -191,14 +194,16 @@ def train(model, dataloader, vdataloader, loss_fn, optimizer, sched, cfg, run):
     torch.save(decoder.state_dict(), log_dir + "decoder.pt")
     torch.save(embedding.state_dict(), log_dir + "embedding.pt")
     torch.save(optimizer.state_dict(), log_dir + "optimizer.pt")
-    torch.save(sched.state_dict(), log_dir + "scheduler.pt")
+    if not sched is None:
+        torch.save(sched.state_dict(), log_dir + "scheduler.pt")
 
     artifact = wandb.Artifact('model', type='model')
     artifact.add_file(log_dir + "encoder.pt")
     artifact.add_file(log_dir + "decoder.pt")
     artifact.add_file(log_dir + "embedding.pt")
     artifact.add_file(log_dir + "optimizer.pt")
-    artifact.add_file(log_dir + "scheduler.pt")
+    if not sched is None:
+        artifact.add_file(log_dir + "scheduler.pt")
     run.log_artifact(artifact)
     print("Model saved")
     return train_loss, val_loss
@@ -219,11 +224,11 @@ def create_label_list(directory_path, label):
 if __name__ == "__main__":
     cfg = {
         "batch_size": 16,
-        "num_workers": 31,
+        "num_workers": 78,
         "channels": 3,
         "image_size": 224,
         "repeated_sampling_factor": 2,
-        "lr": 1.5e-4,
+        "lr": 8e-5,
         "weight_decay": 0.05,
         "beta1": 0.9,
         "beta2": 0.95,
@@ -239,15 +244,16 @@ if __name__ == "__main__":
         "decoder_layers": 12,
         "decoder_mlp_dim": 2048,
         "mlp_activation": nn.GELU(),
-        "mask_ratio": 0.5,
+        "mask_ratio": 0.95,
         "mask_type": 'random',
         "frame_gap_range": (2, 25),
         "fps": 14,
-        "use_pretrained": False,
-        "pretrained_path": "",
-        "save_model_every": 10,
+        "use_pretrained": True,
+        "pretrained_path": "aweers/dd2412-exploration/ckenfh0b",
+        "save_model_every": 4,
         "plot_every": 1,
-        "pure_cross_attention": False
+        "pure_cross_attention": False,
+        "use_scheduler": False
     }
 
     # Calculated parameters
@@ -313,24 +319,13 @@ if __name__ == "__main__":
     masking = Masking(cfg['D'])
     embedding = Embedding(cfg['D'], cfg['patch_size'], cfg['channels'], cfg['image_size']//cfg['patch_size'] * cfg['image_size']//cfg['patch_size'], masking)
 
-    optimizer = torch.optim.AdamW(list(embedding.parameters()) + list(encoder.parameters()) + list(decoder.parameters()), lr=cfg['lr'], betas=(cfg['beta1'], cfg['beta2']), weight_decay=cfg['weight_decay'])
-    sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, eta_min=1e-6)
-
     if cfg['use_pretrained']:
         artifact, _ = download_model_from_run(cfg['pretrained_path'])
         artifact_dir = artifact.download()
         
-        encoder.load_state_dict(torch.load(artifact_dir + "/encoder.pt"))
-        decoder.load_state_dict(torch.load(artifact_dir + "/decoder.pt"))
-        embedding.load_state_dict(torch.load(artifact_dir + "/embedding.pt"))
-        if os.path.isfile(artifact_dir + "/optimizer.pt"):
-            optimizer.load_state_dict(torch.load(artifact_dir + "/optimizer.pt"))
-        else:
-            print("No optimizer found")
-        if os.path.isfile(artifact_dir + "/scheduler.pt"):
-            sched.load_state_dict(torch.load(artifact_dir + "/scheduler.pt"))
-        else:
-            print("No scheduler found")
+        encoder.load_state_dict(torch.load(artifact_dir + "/encoder.pt", map_location=device))
+        decoder.load_state_dict(torch.load(artifact_dir + "/decoder.pt", map_location=device))
+        embedding.load_state_dict(torch.load(artifact_dir + "/embedding.pt", map_location=device))
 
     embedding.train(), encoder.train(), decoder.train()
 
@@ -352,6 +347,21 @@ if __name__ == "__main__":
     cfg['embedding_params'] = embedding_params
     cfg['encoder_params'] = encoder_params
     cfg['decoder_params'] = decoder_params
+
+    optimizer = torch.optim.AdamW(list(embedding.parameters()) + list(encoder.parameters()) + list(decoder.parameters()), lr=cfg['lr'], betas=(cfg['beta1'], cfg['beta2']), weight_decay=cfg['weight_decay'])
+    if cfg['use_scheduler']:
+        sched = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, eta_min=1e-6)
+    else:
+        sched = None
+    if cfg['use_pretrained']:
+        if os.path.isfile(artifact_dir + "/optimizer.pt"):
+            optimizer.load_state_dict(torch.load(artifact_dir + "/optimizer.pt", map_location=device))
+        else:
+            print("No optimizer found")
+        if cfg['use_scheduler'] and os.path.isfile(artifact_dir + "/scheduler.pt"):
+            sched.load_state_dict(torch.load(artifact_dir + "/scheduler.pt", map_location=device))
+        else:
+            print("No scheduler found")
 
     run = wandb.init(
         project="dd2412-exploration",
