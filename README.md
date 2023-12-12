@@ -32,5 +32,14 @@ The videos could (and should) be preprocessed to shift the video encoding overhe
 We use [PyTorchVideo](https://github.com/facebookresearch/pytorchvideo/) for the data loading. To recreate the random frame sampling with a gap between 4 and 48 frames we create our own sampler. We also include the possibility to use a `repeated sampling factor`, such that the overhead of loading and decoding videos is minimized. The sampler can be found in `utils/random_temporal_subsample.py`.
 In [this notebook](notebooks/dataloading.ipynb) we show empirically that the sampler works as expected.
 
+### Data Preprocessing (optional, but recommended)
+We use the `utils/save_frames.sh` script to extract the frames from the videos and store them in seperate folders. Note that the script uses paths that are defined in the script itself and therefore need to be adjusted. The script also uses the `ffmpeg` library, which needs to be installed separately. Using the preprocessed data can speed up the training process significantly.
+
 ## Implementation
-We use PyTorch for our implementation. We implemented a Vision Transformer (ViT) based on the descriptions in [SiamMAE](https://arxiv.org/abs/2305.14344), [An Image is Worth 16x16 Words](https://arxiv.org/abs/2010.11929) and [Attention is All You Need](https://arxiv.org/abs/1706.03762). The implementation can be found in `src/vit.py`. A empirical test of the ViT can be found in [this notebook](notebooks/vit-test.ipynb).
+We use PyTorch for our implementation. We implemented all required layers and parts of the model in the `src/vit.py` file. Some tests of the ViT implementation can be found in `notebooks/vit-tests.ipynb` and tests of the Siamese Masked Autoencoder can be found in `notebooks/siamMAE.ipynb`.
+
+## Training
+We use the `src/train.py` script to train the model. The hyperparameters are specified in the script itself. Those, as well as the whole training process (including model checkpoints and qualitative plots) are synced in a [Weights & Biases](https://wandb.ai/) project.
+
+## Evaluation
+We use the `src/evaluate.py` script to evaluate the model. The script loads a model checkpoint and evaluates it on the [DAVIS-2017 dataset](https://davischallenge.org/). 
