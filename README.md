@@ -43,3 +43,6 @@ We use the `src/train.py` script to train the model. The hyperparameters are spe
 
 ## Evaluation
 We use the `src/evaluate.py` script to evaluate the model. The script loads a model checkpoint and evaluates it on the [DAVIS-2017 dataset](https://davischallenge.org/). 
+
+## Final report
+You can find our final report [here](report.pdf). 
